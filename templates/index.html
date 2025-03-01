@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network Monitor</title>
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.5.2/css/bootstrap.min.css">
+    <style>
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        .pagination {
+            display: flex;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+        .page-item {
+            margin: 0 2px;
+        }
+    </style>
+    <script>
+        document.addEventListener('DOMContentLoaded', (event) => {
+            var eventSource = new EventSource('/events');
+            var filterType = 'All';
+            var currentPage = 1;
+            var eventsPerPage = 10;
+            var allEvents = [];
+
+            function renderTable(events) {
+                var table = document.querySelector('table tbody');
+                table.innerHTML = '';
+                var filteredEvents = events.filter(event => filterType === 'All' || event[3] === filterType);
+                var start = (currentPage - 1) * eventsPerPage;
+                var end = start + eventsPerPage;
+                var paginatedEvents = filteredEvents.slice(start, end);
+                paginatedEvents.forEach(event => {
+                    var row = table.insertRow();
+                    row.insertCell(0).innerText = event[2]; // Timestamp
+                    row.insertCell(1).innerText = event[3]; // Event Type
+                    row.insertCell(2).innerText = event[0]; // Source IP
+                    row.insertCell(3).innerText = event[1]; // Destination IP
+                    row.insertCell(4).innerText = event[4]; // Details
+                });
+                renderPagination(filteredEvents.length);
+            }
+
+            function renderPagination(totalEvents) {
+                var pagination = document.getElementById('pagination');
+                pagination.innerHTML = '';
+                var totalPages = Math.ceil(totalEvents / eventsPerPage);
+                for (var i = 1; i <= totalPages; i++) {
+                    var pageItem = document.createElement('li');
+                    pageItem.className = 'page-item' + (i === currentPage ? ' active' : '');
+                    var pageLink = document.createElement('a');
+                    pageLink.className = 'page-link';
+                    pageLink.href = '#';
+                    pageLink.innerText = i;
+                    pageLink.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        currentPage = parseInt(this.innerText);
+                        renderTable(allEvents);
+                    });
+                    pageItem.appendChild(pageLink);
+                    pagination.appendChild(pageItem);
+                }
+            }
+
+            eventSource.onmessage = function(e) {
+                allEvents = JSON.parse(e.data);
+                renderTable(allEvents);
+                console.log("Events updated:", allEvents);
+            };
+
+            document.getElementById('startCapture').addEventListener('click', function() {
+                fetch('/start_capture').then(response => response.json()).then(data => {
+                    console.log(data.status);
+                });
+            });
+
+            document.getElementById('stopCapture').addEventListener('click', function() {
+                fetch('/stop_capture').then(response => response.json()).then(data => {
+                    console.log(data.status);
+                });
+            });
+
+            document.getElementById('generateReport').addEventListener('click', function() {
+                var reportType = document.getElementById('reportType').value;
+                fetch(`/generate_report?type=${reportType}`).then(response => response.blob()).then(blob => {
+                    var url = window.URL.createObjectURL(blob);
+                    var a = document.createElement('a');
+                    a.href = url;
+                    a.download = `report.${reportType}`; // Set the filename dynamically based on the selected type
+                    document.body.appendChild(a);
+                    a.click();
+                    a.remove();
+                });
+            });
+
+            document.getElementById('filterType').addEventListener('change', function() {
+                filterType = this.value;
+                currentPage = 1; // Reset to first page when filter changes
+                renderTable(allEvents);
+            });
+        });
+    </script>
+</head>
+<body>
+    <div class="container">
+        <h1 class="my-4">Network Events</h1>
+        <div class="mb-3 d-flex align-items-center">
+            <button id="startCapture" class="btn btn-success mr-2">Start Capture</button>
+            <button id="stopCapture" class="btn btn-danger mr-2">Stop Capture</button>
+            <div class="mr-2">
+                <label for="reportType" class="mr-2">Report Type:</label>
+                <select id="reportType" class="form-control w-auto d-inline-block">
+                    <option value="csv">CSV</option>
+                    <option value="json">JSON</option>
+                </select>
+            </div>
+            <button id="generateReport" class="btn btn-primary mr-2">Generate Report</button>
+            <div>
+                <label for="filterType" class="mr-2">Filter by Attack Type:</label>
+                <select id="filterType" class="form-control w-auto d-inline-block">
+                    <option value="All">All</option>
+                    <option value="Port Scan Attempt">Port Scan Attempt</option>
+                    <option value="Possible DoS Attack">Possible DoS Attack</option>
+                    <option value="Possible Packet Injection">Possible Packet Injection</option>
+                </select>
+            </div>
+        </div>
+        <table class="table table-striped">
+            <thead>
+                <tr>
+                    <th>Timestamp</th>
+                    <th>Event Type</th>
+                    <th>Source IP</th>
+                    <th>Destination IP</th>
+                    <th>Details</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- Events will be dynamically inserted here -->
+            </tbody>
+        </table>
+        <nav>
+            <ul id="pagination" class="pagination">
+                <!-- Pagination items will be dynamically inserted here -->
+            </ul>
+        </nav>
+    </div>
+</body>
+</html>
