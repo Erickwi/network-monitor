@@ -1,6 +1,8 @@
 import eventlet
 eventlet.monkey_patch()
 
+import subprocess
+
 from scapy.all import sniff, IP, TCP, UDP
 from database import db_manager
 from datetime import datetime
@@ -17,31 +19,54 @@ capture_running = False
 event_queue = queue.Queue()
 capture_thread = None
 
+# Diccionario global para almacenar la última notificación por puerto
+last_port_notification = {}
+NOTIFICATION_TIMEOUT = 60  # Tiempo en segundos para no repetir la notificación
+
 def set_capture_running(value):
     global capture_running
     capture_running = value
+
+# Función para enviar alertas usando notify-send a través de subprocess.run
+def send_alert(message, port=None):
+    if port is not None:
+        current_time = time.time()
+        if port in last_port_notification and (current_time - last_port_notification[port]) < NOTIFICATION_TIMEOUT:
+            return
+        last_port_notification[port] = current_time
+    try:
+        subprocess.run(['notify-send', 'Alerta de Seguridad', message])
+    except Exception as e:
+        print("Error enviando notificación:", e)
+    print("ALERTA:", message)
 
 def analyze_packet(packet):
     if IP in packet:
         src_ip = packet[IP].src
         dst_ip = packet[IP].dst
         
-        # Detección básica de escaneo de puertos
-        if TCP in packet and packet[TCP].flags == 2:  # SYN flag
+        # Detección básica de escaneo de puertos (SYN flag)
+        if TCP in packet and packet[TCP].flags == 2:
+            alert_message = f"Escaneo de puertos detectado: {src_ip} -> {dst_ip} en puerto {packet[TCP].dport}"
+            send_alert(alert_message, port=packet[TCP].dport)
             event_queue.put(("Port Scan Attempt", src_ip, dst_ip, f"Port: {packet[TCP].dport}"))
         
-        # Detección básica de posible ataque DoS
-        if TCP in packet and packet[TCP].flags == 0:  # NULL flags
+        # Detección básica de posible ataque DoS (NULL flags)
+        if TCP in packet and packet[TCP].flags == 0:
+            alert_message = f"Posible ataque DoS detectado: {src_ip} -> {dst_ip} (flags NULL)"
+            send_alert(alert_message)
             event_queue.put(("Possible DoS Attack", src_ip, dst_ip, "NULL flags detected"))
         
-        # Detección básica de posible inyección de paquetes
+        # Detección básica de posible inyección de paquetes (UDP de tamaño elevado)
         if UDP in packet and packet[UDP].len > 1000:
+            alert_message = f"Posible inyección de paquetes detectada: {src_ip} -> {dst_ip} (UDP {packet[UDP].len} bytes)"
+            send_alert(alert_message)
             event_queue.put(("Possible Packet Injection", src_ip, dst_ip, f"Large UDP packet: {packet[UDP].len} bytes"))
 
 def log_event(event_type, src_ip, dst_ip, details):
     with app.app_context():
         db_manager.log_event(event_type, src_ip, dst_ip, details)
-        print(f"Event logged: {event_type} from {src_ip} to {dst_ip}")
+    print(f"Event logged: {event_type} from {src_ip} to {dst_ip}")
 
 def event_processor():
     while True:
@@ -49,7 +74,7 @@ def event_processor():
         log_event(event_type, src_ip, dst_ip, details)
         event_queue.task_done()
 
-def start_monitoring(interface="eth0"):
+def start_monitoring(interface="enp0s3"):
     print(f"Starting packet capture on interface {interface}")
     threading.Thread(target=event_processor, daemon=True).start()
     sniff(iface=interface, prn=analyze_packet, store=0)
@@ -59,7 +84,6 @@ def generate_report(report_type):
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
     
     if report_type == 'csv':
-        # Generate CSV report
         csv_filename = f'report_{timestamp}.csv'
         with open(csv_filename, 'w', newline='') as csvfile:
             fieldnames = ['timestamp', 'event_type', 'src_ip', 'dst_ip', 'details']
@@ -76,7 +100,6 @@ def generate_report(report_type):
         return csv_filename
     
     elif report_type == 'json':
-        # Generate JSON report
         json_filename = f'report_{timestamp}.json'
         with open(json_filename, 'w') as jsonfile:
             json.dump([{
